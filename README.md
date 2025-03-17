@@ -58,7 +58,7 @@ project_root/
 ```
 ## Placing Pretrained Weights
 
-If you have pretrained `.pth` model weights, place them inside the `models/weights/` folder.
+If you have pretrained `.pth` model weights (inside CLIP-EBC\models\clip\_clip\weights), place them inside the `models/weights/` folder (only use the weights for clip_text_encoder_resnet50.pth).
 
 ### Example:
 Ensure the structure is as follows:
@@ -66,7 +66,7 @@ Ensure the structure is as follows:
 project_root/
 │── models/
 │   ├── weights/
-│   │   ├── abc.pth
+│   │   ├── clip_text_encoder_resnet50.pth
 ```
 ## Usage
 
