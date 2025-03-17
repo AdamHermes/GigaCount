@@ -30,16 +30,6 @@ This project implements a deep learning-based crowd counting model using the QNR
    pip install -r requirements.txt
    ```
 
-5. Install PyTorch (for CUDA 12.6):
-   ```sh
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-   ```
-
-6. Install additional packages:
-   ```sh
-   pip install tqdm
-   ```
-
 ## Dataset Preparation
 
 1. Download the processed QNRF dataset.
