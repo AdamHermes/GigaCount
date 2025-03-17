@@ -56,43 +56,22 @@ project_root/
 │── src/
 │── README.md
 ```
+## Placing Pretrained Weights
 
+If you have pretrained `.pth` model weights, place them inside the `models/weights/` folder.
+
+### Example:
+Ensure the structure is as follows:
+```
+project_root/
+│── models/
+│   ├── weights/
+│   │   ├── abc.pth
+```
 ## Usage
 
 To train the model, run:
 ```sh
-python train.py --config configs/qnrf.yaml
+python train.py
 ```
 
-To evaluate on the test set, run:
-```sh
-python test.py --model checkpoints/best_model.pth
-```
-
-## Results
-
-| Model | MAE | RMSE |
-|--------|------|------|
-| Baseline | 80.5 | 120.3 |
-| Improved Model | 65.2 | 98.7 |
-
-### Example Output:
-![Example Detection](assets/example_output.png)
-
-## Contributing
-
-Contributions are welcome!
-To contribute:
-1. Fork the repository.
-2. Create a new branch.
-3. Commit your changes.
-4. Open a pull request.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- QNRF Dataset: [https://www.kaggle.com/datasets/qatarmobilityinnovations/qnrf-crowd-counting](https://www.kaggle.com/datasets/qatarmobilityinnovations/qnrf-crowd-counting)
-- PyTorch Documentation: [https://pytorch.org/docs/stable/index.html](https://pytorch.org/docs/stable/index.html)
