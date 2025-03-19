@@ -21,13 +21,14 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LOSS_TYPE = "adaptive_hybrid"
 USE_AMP = True
 MAX_BIN_VALUE = 1e6  
-
-transform = Compose([
-    RandomResizedCrop((512,512), scale=(0.8,1.5)),
+transforms = Compose([
+    RandomResizedCrop((512, 512), scale=(0.8, 1.5)),
     RandomHorizontalFlip(),
     RandomApply([
-        ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
-    ], p=0.5),  # Apply with 50% probability
+        ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.0),
+        GaussianBlur(kernel_size=5, sigma=(0.1, 5.0)),
+        PepperSaltNoise(saltiness=1e-3, spiciness=1e-3),
+    ], p=(0.2, 0.2, 0.5)),
 ])
 original_bins = {
         "qnrf": {
@@ -84,7 +85,7 @@ scaler = GradScaler() if USE_AMP else None
 # Load Dataset
 
 def train():
-    dataset = Crowd("qnrf", split="train", transforms=transform, sigma=None, return_filename=True)
+    dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     model.train()
