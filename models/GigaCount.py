@@ -121,17 +121,14 @@ class GigaCount(nn.Module):
 
         logit_scale = self.logit_scale.exp().clamp(max=100)  
         logits = logit_scale * image_features @ text_features.t()
-        print("Logits stats: min:", logits.min().item(), "max:", logits.max().item(), "mean:", logits.mean().item())
 
         logits = logits.permute(0, 3, 1, 2)
         
         
 
         probs = logits.softmax(dim=1)
-        print("Probability Maps", probs.shape)
-        print(probs)
+
         print("Softmax probs stats: min:", probs.min().item(), "max:", probs.max().item())
-        print("Anchor Points:", self.anchor_points)
 
 
         exp = (probs * self.anchor_points.to(x.device)).sum(dim=1, keepdim=True)

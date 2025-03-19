@@ -17,15 +17,10 @@ class AdaptiveHybridLoss(nn.Module):
     def _bin_count(self, density_map: torch.Tensor) -> torch.Tensor:
         """Assigns ground-truth density maps to bin indices for classification."""
         bin_counts = torch.zeros_like(density_map, dtype=torch.long)
-        print("Bins Shape:", self.bins)
-        print("DENSITY MAP: ", density_map.shape)
         for i, (low, high) in enumerate(self.bins):  
-            print(f"Processing bin {i}: range ({low}, {high})")
             mask = (density_map >= low) & (density_map <= high)
-            print(f"Assigned {mask.sum().item()} pixels to bin {i}")
             bin_counts[mask] = i
         
-        print("Final bin counts unique values:", torch.unique(bin_counts))
         return bin_counts
 
 
@@ -47,8 +42,7 @@ class AdaptiveHybridLoss(nn.Module):
 
         # Compute regression loss
         count_loss = self.mse_loss_fn(pred_density, target_density).mean()
-        print("Shapes - pred_class:", pred_class.shape, "pred_density:", pred_density.shape, "target_density:", target_density.shape)
-        print("target_class unique values:", torch.unique(target_class))  
+
         print("CrossEntropyLoss input stats: min:", pred_class.min().item(), "max:", pred_class.max().item())
         print("MSELoss input stats: min:", pred_density.min().item(), "max:", pred_density.max().item())
 
