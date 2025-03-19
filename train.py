@@ -15,11 +15,11 @@ from transforms import ColorJitter, GaussianBlur, RandomResizedCrop, RandomHoriz
 from torchvision.transforms.v2 import Compose
 # Training Configurations
 BATCH_SIZE = 8
-LEARNING_RATE = 1e-6
+LEARNING_RATE = 1e-4
 EPOCHS = 50
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LOSS_TYPE = "adaptive_hybrid"
-USE_AMP = True  
+USE_AMP = True
 MAX_BIN_VALUE = 1e6  
 
 transform = Compose([
@@ -78,53 +78,36 @@ if torch.cuda.device_count() > 1:
 
 loss_fn = AdaptiveHybridLoss(bins=bins)
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-scaler = GradScaler() if USE_AMP else None  
+scaler = GradScaler() if USE_AMP else None
+
 
 # Load Dataset
 
 def train():
-    dataset = Crowd("qnrf", split="train",transforms=transform, sigma=8, return_filename=True)
-
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=False, num_workers=4, collate_fn=collate_fn)
-    data_iter = iter(dataloader)
+    dataset = Crowd("qnrf", split="train", transforms=transform, sigma=None, return_filename=True)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     model.train()
     for epoch in range(EPOCHS):
-        img_id = None
         epoch_loss = 0.0
         all_preds, all_gts = [], []
-        num_images = 1201
 
-        for i in range(num_images):
-            # Handle StopIteration error by resetting iterator
-            if img_id is not None:
-                images, labels, density, image_path = dataset[img_id]
-            else:
-                images, labels, density, image_path = next(data_iter)
-
+        for batch_idx, (images, labels, density, image_paths) in enumerate(tqdm(dataloader, desc=f"Epoch {epoch+1}")):
             optimizer.zero_grad()
             images, density = images.to(DEVICE), density.to(DEVICE)
 
-            with autocast(enabled=USE_AMP):
+            with autocast(enabled=USE_AMP): 
+                if torch.isnan(images).any():
+                    print("⚠️ NaN detected in Images")
                 logits, preds = model(images)
 
-                # Debug NaN/Inf values
                 if torch.isnan(logits).any() or torch.isinf(logits).any():
-                    print("⚠️ NaN/Inf detected in logits!")
+                    print(f"⚠️ NaN/Inf detected in logits at batch {batch_idx}!")
                 if torch.isnan(preds).any() or torch.isinf(preds).any():
-                    print("⚠️ NaN/Inf detected in preds!")
+                    print(f"⚠️ NaN/Inf detected in preds at batch {batch_idx}!")
 
                 loss, loss_dict = loss_fn(logits, preds, density)
-
-            # Fix list error: Ensure labels is a tensor before calling .detach()
-            labels_tensor = torch.cat(labels).detach().cpu()
-
-            gt_counts = labels_tensor.numpy()  
-            pred_counts = preds.sum().item()  
-
-            print(f"Ground Truth Counts: {len(gt_counts)}")
-            print(f"Predicted Counts: {pred_counts}")
-
+    
             if USE_AMP:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -137,26 +120,26 @@ def train():
                 optimizer.step()
 
             epoch_loss += loss.item()
-            
-            all_preds.append(preds.sum().item())  # Store sum of predicted counts for each image
-            all_gts.append(len(gt_counts))  # Store number of ground truth objects
 
+            labels_tensor = torch.cat(labels).detach().cpu()
+            gt_counts = labels_tensor.numpy()
+            pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
 
+            all_preds.extend(pred_counts)  # Store predicted counts per batch
+            all_gts.extend([len(gt) for gt in labels])  # Store GT counts
 
-
-            # Convert lists to numpy arrays
         all_preds = np.array(all_preds)
         all_gts = np.array(all_gts)
 
-        # Compute Metrics
-        mae = np.mean(np.abs(all_preds - all_gts))  # Mean Absolute Error
-        mse = np.mean((all_preds - all_gts) ** 2)  # Mean Squared Error
-        rmse = np.sqrt(mse)  # Root Mean Squared Error
+        mae = np.mean(np.abs(all_preds - all_gts))
+        mse = np.mean((all_preds - all_gts) ** 2)
+        rmse = np.sqrt(mse)
 
         print(f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}")
         print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}")
 
-
 if __name__ == "__main__":
     os.makedirs("checkpoints", exist_ok=True)
     train()
+
+
