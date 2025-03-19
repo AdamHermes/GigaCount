@@ -78,7 +78,7 @@ if torch.cuda.device_count() > 1:
 
 loss_fn = AdaptiveHybridLoss(bins=bins)
 optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-scaler = GradScaler("cuda") if USE_AMP else None  
+scaler = GradScaler() if USE_AMP else None  
 
 # Load Dataset
 
