@@ -85,62 +85,56 @@ scaler = GradScaler() if USE_AMP else None
 # Load Dataset
 
 def train():
-    dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    log_file = "train_log.txt"
+    with open(log_file, "a") as log:
+        dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
+        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
-    model.train()
-    for epoch in range(EPOCHS):
-        epoch_loss = 0.0
-        all_preds, all_gts = [], []
+        model.train()
+        for epoch in range(EPOCHS):
+            epoch_loss = 0.0
+            all_preds, all_gts = [], []
 
-        for batch_idx, (images, labels, density, image_paths) in enumerate(tqdm(dataloader, desc=f"Epoch {epoch+1}")):
-            optimizer.zero_grad()
-            images, density = images.to(DEVICE), density.to(DEVICE)
+            for batch_idx, (images, labels, density, image_paths) in enumerate(tqdm(dataloader, desc=f"Epoch {epoch+1}")):
+                optimizer.zero_grad()
+                images, density = images.to(DEVICE), density.to(DEVICE)
 
-            with autocast(enabled=USE_AMP): 
-                if torch.isnan(images).any():
-                    print("⚠️ NaN detected in Images")
-                logits, preds = model(images)
+                with autocast(enabled=USE_AMP): 
+                    logits, preds = model(images)
+                    loss, loss_dict = loss_fn(logits, preds, density)
 
-                if torch.isnan(logits).any() or torch.isinf(logits).any():
-                    print(f"⚠️ NaN/Inf detected in logits at batch {batch_idx}!")
-                if torch.isnan(preds).any() or torch.isinf(preds).any():
-                    print(f"⚠️ NaN/Inf detected in preds at batch {batch_idx}!")
+                if USE_AMP:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
 
-                loss, loss_dict = loss_fn(logits, preds, density)
-    
-            if USE_AMP:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
+                epoch_loss += loss.item()
 
-            epoch_loss += loss.item()
+                labels_tensor = torch.cat(labels).detach().cpu()
+                gt_counts = labels_tensor.numpy()
+                pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
 
-            labels_tensor = torch.cat(labels).detach().cpu()
-            gt_counts = labels_tensor.numpy()
-            pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
+                all_preds.extend(pred_counts)
+                all_gts.extend([len(gt) for gt in labels])
 
-            all_preds.extend(pred_counts)  # Store predicted counts per batch
-            all_gts.extend([len(gt) for gt in labels])  # Store GT counts
+            all_preds = np.array(all_preds)
+            all_gts = np.array(all_gts)
 
-        all_preds = np.array(all_preds)
-        all_gts = np.array(all_gts)
+            mae = np.mean(np.abs(all_preds - all_gts))
+            mse = np.mean((all_preds - all_gts) ** 2)
+            rmse = np.sqrt(mse)
 
-        mae = np.mean(np.abs(all_preds - all_gts))
-        mse = np.mean((all_preds - all_gts) ** 2)
-        rmse = np.sqrt(mse)
-
-        print(f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}")
-        print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}")
+            log_entry = f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}, MAE: {mae:.2f}, RMSE: {rmse:.2f}\n"
+            print(log_entry.strip())
+            log.write(log_entry)
+            log.flush()  # Ensures immediate writing to file
 
 if __name__ == "__main__":
     os.makedirs("checkpoints", exist_ok=True)
     train()
-
-
