@@ -14,7 +14,7 @@ from eval_metrics import CrowdCountingMetrics
 from transforms import ColorJitter, GaussianBlur, RandomResizedCrop, RandomHorizontalFlip,RandomApply,PepperSaltNoise
 from torchvision.transforms.v2 import Compose
 # Training Configurations
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 LEARNING_RATE = 1e-4
 EPOCHS = 50
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -66,7 +66,7 @@ original_bins = {
 bins = original_bins["qnrf"]["bins"]["fine"]
 anchor_points = original_bins["qnrf"]["anchor_points"]["fine"]["average"] 
 bins = [(float(b[0]), float(b[1]) if b[1] != "inf" else float('inf')) for b in bins]
-
+print("BINS SHAPE: ", bins)
 anchor_points = [float(p) for p in anchor_points]
 #bins = compute_dynamic_bins(original_bins["qnrf"]["bins"], num_bins=3)
 #anchor_points = original_bins["qnrf"]["anchor_points"]["middle"]
@@ -86,24 +86,10 @@ scaler = GradScaler() if USE_AMP else None
 
 def train():
     dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, collate_fn=collate_fn)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     model.train()
-    best_mae = float('inf')  # Initialize best MAE to a high value
-    start_epoch = 0
-
-    # Load checkpoint if available
-    checkpoint_path = "checkpoints/latest_checkpoint.pth"
-    if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        scaler.load_state_dict(checkpoint["scaler_state_dict"]) if USE_AMP else None
-        start_epoch = checkpoint["epoch"] + 1
-        best_mae = checkpoint["best_mae"]
-        print(f"Resuming from epoch {start_epoch}, Best MAE: {best_mae:.2f}")
-
-    for epoch in range(start_epoch, EPOCHS):
+    for epoch in range(EPOCHS):
         epoch_loss = 0.0
         all_preds, all_gts = [], []
 
@@ -112,9 +98,17 @@ def train():
             images, density = images.to(DEVICE), density.to(DEVICE)
 
             with autocast(enabled=USE_AMP): 
+                if torch.isnan(images).any():
+                    print("⚠️ NaN detected in Images")
                 logits, preds = model(images)
-                loss, loss_dict = loss_fn(logits, preds, density)
 
+                if torch.isnan(logits).any() or torch.isinf(logits).any():
+                    print(f"⚠️ NaN/Inf detected in logits at batch {batch_idx}!")
+                if torch.isnan(preds).any() or torch.isinf(preds).any():
+                    print(f"⚠️ NaN/Inf detected in preds at batch {batch_idx}!")
+
+                loss, loss_dict = loss_fn(logits, preds, density)
+    
             if USE_AMP:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -132,9 +126,8 @@ def train():
             gt_counts = labels_tensor.numpy()
             pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
 
-            all_preds.extend(pred_counts)  
-            all_gts.extend([len(gt) for gt in labels])  
-
+            all_preds.extend(pred_counts)  # Store predicted counts per batch
+            all_gts.extend([len(gt) for gt in labels])  # Store GT counts
 
         all_preds = np.array(all_preds)
         all_gts = np.array(all_gts)
@@ -146,33 +139,8 @@ def train():
         print(f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}")
         print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}")
 
-        # Save checkpoint every 5 epochs
-        if (epoch + 1) % 2 == 0:
-            save_checkpoint(epoch, best_mae, model, optimizer, scaler)
-
-        # Save the best model based on MAE
-        if mae < best_mae:
-            best_mae = mae
-            save_best_model(model, best_mae)
-
-
-
-def save_checkpoint(epoch, best_mae, model, optimizer, scaler):
-    checkpoint = {
-        "epoch": epoch,
-        "best_mae": best_mae,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scaler_state_dict": scaler.state_dict() if USE_AMP else None,
-    }
-    torch.save(checkpoint, "checkpoints/latest_checkpoint.pth")
-    print(f"Checkpoint saved at epoch {epoch+1}")
-
-
-def save_best_model(model, best_mae):
-    torch.save(model.state_dict(), "checkpoints/best_model.pth")
-    print(f"Best model saved with MAE: {best_mae:.2f}")
-
 if __name__ == "__main__":
     os.makedirs("checkpoints", exist_ok=True)
     train()
+
+
