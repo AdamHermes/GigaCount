@@ -1,5 +1,6 @@
 CLRClip/
 data/
+checkpoints/
 models/weights/
 pip-wheel-metadata/
 __pycache__/
