@@ -13,9 +13,11 @@ from utils import collate_fn
 from eval_metrics import CrowdCountingMetrics
 from transforms import ColorJitter, GaussianBlur, RandomResizedCrop, RandomHorizontalFlip,RandomApply,PepperSaltNoise
 from torchvision.transforms.v2 import Compose
+from evaluate import evaluate_model  # Import evaluation function
+
 # Training Configurations
-BATCH_SIZE = 8
-LEARNING_RATE = 1e-4
+BATCH_SIZE = 16
+LEARNING_RATE = 1e-3
 EPOCHS = 50
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LOSS_TYPE = "adaptive_hybrid"
@@ -83,15 +85,27 @@ scaler = GradScaler() if USE_AMP else None
 
 
 # Load Dataset
-
 def train():
-    log_file = "train_log.txt"
-    with open(log_file, "a") as log:
-        dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
+    dataset = Crowd("qnrf", split="train", transforms=transforms, sigma=None, return_filename=True)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, collate_fn=collate_fn)
 
-        model.train()
-        for epoch in range(EPOCHS):
+    model.train()
+    best_mae = float('inf')  # Initialize best MAE to a high value
+    start_epoch = 0
+
+    # Load checkpoint if available
+    checkpoint_path = "checkpoints/latest_checkpoint.pth"
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scaler.load_state_dict(checkpoint["scaler_state_dict"]) if USE_AMP else None
+        start_epoch = checkpoint["epoch"] + 1
+        best_mae = checkpoint["best_mae"]
+        print(f"Resuming from epoch {start_epoch}, Best MAE: {best_mae:.2f}")
+    with open("eval_log.txt", "a") as log:
+
+        for epoch in range(start_epoch, EPOCHS):
             epoch_loss = 0.0
             all_preds, all_gts = [], []
 
@@ -120,8 +134,8 @@ def train():
                 gt_counts = labels_tensor.numpy()
                 pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
 
-                all_preds.extend(pred_counts)
-                all_gts.extend([len(gt) for gt in labels])
+                all_preds.extend(pred_counts)  
+                all_gts.extend([len(gt) for gt in labels])  
 
             all_preds = np.array(all_preds)
             all_gts = np.array(all_gts)
@@ -130,10 +144,59 @@ def train():
             mse = np.mean((all_preds - all_gts) ** 2)
             rmse = np.sqrt(mse)
 
+            print(f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}")
+            print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}")
             log_entry = f"Epoch [{epoch + 1}/{EPOCHS}] - Loss: {epoch_loss / len(dataloader):.4f}, MAE: {mae:.2f}, RMSE: {rmse:.2f}\n"
-            print(log_entry.strip())
-            log.write(log_entry)
-            log.flush()  # Ensures immediate writing to file
+            print(log_entry)
+
+            with open("eval_log.txt", "a") as log:
+                log.write(log_entry)
+                log.flush()  # Ensures immediate writing to file
+            # Save checkpoint every 5 epochs
+            if (epoch + 1) % 5 == 0:
+                save_checkpoint(epoch, best_mae, model, optimizer, scaler)
+
+
+            if (epoch + 1) % 5 == 0:
+                checkpoint_path = "checkpoints/best_model.pth"
+                torch.save({
+                    "epoch": epoch + 1,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                }, checkpoint_path)
+
+                print(f"Saved checkpoint at epoch {epoch + 1}. Running evaluation...")
+                
+                mae, rmse = evaluate_model(model)  # ✅ Direct function call for evaluation
+                print(f"Evaluation - MAE: {mae:.2f}, RMSE: {rmse:.2f}")  # ✅ Print evaluation results
+                if mae < best_mae:
+                    best_mae = mae
+                    save_best_model(model, best_mae)
+                # Log evaluation results
+                with open("eval_log.txt", "a") as log:
+                    log.write(f"Epoch {epoch + 1} Evaluation - MAE: {mae:.2f}, RMSE: {rmse:.2f}\n")
+                    log.flush()
+            # Save the best model based on MAE
+
+
+
+def save_checkpoint(epoch, best_mae, model, optimizer, scaler):
+    checkpoint = {
+        "epoch": epoch,
+        "best_mae": best_mae,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scaler_state_dict": scaler.state_dict() if USE_AMP else None,
+    }
+    torch.save(checkpoint, "checkpoints/latest_checkpoint.pth")
+    print(f"✅ Checkpoint saved at epoch {epoch+1}")
+
+
+def save_best_model(model, best_mae):
+    torch.save(model.state_dict(), "checkpoints/best_model.pth")
+    print(f"🏆 Best model saved with MAE: {best_mae:.2f}")
+
+
 
 if __name__ == "__main__":
     os.makedirs("checkpoints", exist_ok=True)
