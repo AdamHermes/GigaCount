@@ -17,7 +17,7 @@ from evaluate import evaluate_model  # Import evaluation function
 
 # Training Configurations
 BATCH_SIZE = 16
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 EPOCHS = 50
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LOSS_TYPE = "adaptive_hybrid"
@@ -35,30 +35,12 @@ transforms = Compose([
 original_bins = {
         "qnrf": {
             "bins": {
-                "fine":[
-                    [0, 0], [1, 1], [2, 2], [3, 3], [4, 4],
-                    [5, 5], [6, 6], [7, 7], [8, "inf"]
-                ],
-                "dynamic": [
-                    [0, 0], [1, 1], [2, 2], [3, 3],
-                    [4, 5], [6, 7], [8, "inf"]
-                ],
-                "coarse": [
-                    [0, 0], [1, 2], [3, 4], [5, 6], [7, "inf"]
-                ]
+                "fine": [[0, 0], [1, 1], [2, 2], [3, 3], [4, "inf"]]
             },
             "anchor_points": {
                 "fine": {
-                    "middle": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-                    "average": [0, 1, 2, 3, 4, 5, 6, 7, 9.23349]
-                },
-                "dynamic": {
-                    "middle": [0, 1, 2, 3, 4.5, 6.5, 8],
-                    "average": [0, 1, 2, 3, 4.29278, 6.31441, 9.23349]
-                },
-                "coarse": {
-                    "middle": [0, 1.5, 3.5, 5.5, 7],
-                    "average": [0, 1.14978, 3.27641, 5.30609, 8.11466]
+                    "middle": [0, 1, 2, 3, 4],
+                    "average": [0, 1, 2, 3, 4.21937]
                 }
             }
         }
@@ -167,8 +149,8 @@ def train():
 
                 print(f"Saved checkpoint at epoch {epoch + 1}. Running evaluation...")
                 
-                mae, rmse = evaluate_model(model)  # ✅ Direct function call for evaluation
-                print(f"Evaluation - MAE: {mae:.2f}, RMSE: {rmse:.2f}")  # ✅ Print evaluation results
+                mae, rmse = evaluate_model(model)  
+                print(f"Evaluation - MAE: {mae:.2f}, RMSE: {rmse:.2f}")  
                 if mae < best_mae:
                     best_mae = mae
                     save_best_model(model, best_mae)
@@ -194,7 +176,7 @@ def save_checkpoint(epoch, best_mae, model, optimizer, scaler):
 
 def save_best_model(model, best_mae):
     torch.save(model.state_dict(), "checkpoints/best_model.pth")
-    print(f"🏆 Best model saved with MAE: {best_mae:.2f}")
+    print(f"Best model saved with MAE: {best_mae:.2f}")
 
 
 
