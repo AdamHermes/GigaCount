@@ -5,33 +5,43 @@ from tqdm import tqdm
 from models.GigaCount import GigaCount
 from dataset import Crowd
 from utils import collate_fn
-
+from transforms import ColorJitter, GaussianBlur, RandomResizedCrop, RandomHorizontalFlip, RandomApply, PepperSaltNoise
+from torchvision.transforms.v2 import Compose
+from eval_metrics import sliding_window_predict
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 1
 CHECKPOINT_PATH = "checkpoints/best_model.pth"
 
 def evaluate_model(model=None, checkpoint_path=CHECKPOINT_PATH):
-    """Evaluate the model on the test set and return MAE, RMSE"""
+    
+    transforms = Compose([
+        RandomResizedCrop((512, 512), scale=(0.8, 1.5)),
+        #RandomHorizontalFlip(),
+        # RandomApply([
+        #     ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.0),
+        #     GaussianBlur(kernel_size=5, sigma=(0.1, 5.0)),
+        #     PepperSaltNoise(saltiness=1e-3, spiciness=1e-3),
+        # ], p=(0., 0., 0.)),
+    ])
     dataset = Crowd("qnrf", split="val", transforms=None, sigma=None, return_filename=True)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=collate_fn)
 
     if model is None:
         model = GigaCount().to(DEVICE)
-        checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+        checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
 
     model.eval()
     all_preds, all_gts = [], []
-
+    
     with torch.no_grad():
         for batch_idx, (images, labels, density, image_paths) in enumerate(tqdm(dataloader)):
 
             images, density = images.to(DEVICE), density.to(DEVICE)
 
-            _, preds = model(images) 
-
-
-            pred_counts = preds.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
+            #pred_density = sliding_window_predict(model, images, 224, 224) # the window_size and stride = images.size()
+            _, pred_density = model(images)
+            pred_counts = pred_density.sum(dim=(1, 2, 3)).detach().cpu().numpy().tolist()
 
             all_preds.extend(pred_counts)
             all_gts.extend([len(gt) for gt in labels])

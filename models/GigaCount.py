@@ -34,8 +34,8 @@ class GigaCount(nn.Module):
        
         self.feature_fusion = FeatureFusion(in_channels_list=[96, 192, 384], out_channels=output_dim)
         
-        self.encoder_reduction = 32
-        self.reduction = self.encoder_reduction
+
+        self.reduction = 8
         self.channels = 672
         self.clip_embed_dim = output_dim
 
@@ -99,8 +99,8 @@ class GigaCount(nn.Module):
         device = x.device
         shallow,mid,deep = self.image_encoder(x)
         x = self.feature_fusion([shallow,mid, deep])
-        target_size = (56, 56)  # Match CLIP-EBC
-        x = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
+        
+        x = F.interpolate(x, size=(32,32), mode="bilinear", align_corners=False)
 
         x = self.projection(x)
 

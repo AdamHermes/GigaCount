@@ -1,25 +1,8 @@
-Epoch 21 - MAE: 350.70, RMSE: 426.34
-Epoch [21/50] - Loss: 0.0776, MAE: 350.70, RMSE: 426.34
-Epoch 21 Evaluation - MAE: 470.05, RMSE: 791.63
-Epoch 21 - MAE: 347.66, RMSE: 407.68
-Epoch [21/50] - Loss: 0.0776, MAE: 347.66, RMSE: 407.68
-Epoch [21/50] - Loss: 0.0776, MAE: 351.47, RMSE: 415.21
-Epoch [22/50] - Loss: 0.0751, MAE: 337.92, RMSE: 395.07
-Epoch [23/50] - Loss: 0.0728, MAE: 335.18, RMSE: 407.60
-Epoch [24/50] - Loss: 0.0705, MAE: 330.22, RMSE: 409.48
-Epoch [25/50] - Loss: 0.0683, MAE: 319.11, RMSE: 400.88
-Epoch 25 Evaluation - MAE: 471.02, RMSE: 811.56
-Epoch [26/50] - Loss: 0.0459, MAE: 202.17, RMSE: 358.53
-Epoch [27/50] - Loss: 0.0443, MAE: 200.14, RMSE: 319.57
-Epoch [1/50] - Loss: 0.2997, MAE: 609.91, RMSE: 1153.32
-Epoch [1/50] - Loss: 0.3052, MAE: 621.23, RMSE: 1160.60
-Epoch [2/50] - Loss: 0.0636, MAE: 248.44, RMSE: 352.26
-Epoch [3/50] - Loss: 0.0492, MAE: 204.75, RMSE: 314.19
-Epoch [4/50] - Loss: 0.0391, MAE: 189.60, RMSE: 327.04
-Epoch [5/50] - Loss: 0.0315, MAE: 169.48, RMSE: 300.56
-Epoch 5 Evaluation - MAE: 578.75, RMSE: 941.97
-Epoch [6/50] - Loss: 0.0257, MAE: 162.06, RMSE: 328.63
-Epoch [7/50] - Loss: 0.0213, MAE: 168.62, RMSE: 349.72
-Epoch [8/50] - Loss: 0.0179, MAE: 166.61, RMSE: 355.24
-Epoch [9/50] - Loss: 0.0151, MAE: 162.60, RMSE: 324.12
-Epoch [10/50] - Loss: 0.0130, MAE: 168.23, RMSE: 369.48
+Epoch [1/50] - Loss: 0.2929, MAE: 596.77, RMSE: 1146.43
+Epoch [2/50] - Loss: 0.0634, MAE: 243.92, RMSE: 351.61
+Epoch [3/50] - Loss: 0.0490, MAE: 208.40, RMSE: 333.27
+Epoch [4/50] - Loss: 0.0389, MAE: 187.09, RMSE: 323.94
+Epoch [5/50] - Loss: 0.0313, MAE: 172.03, RMSE: 317.68
+Epoch 5 Evaluation - MAE: 579.46, RMSE: 942.49
+Epoch [6/50] - Loss: 0.0256, MAE: 168.12, RMSE: 346.24
+Epoch [7/50] - Loss: 0.0211, MAE: 175.27, RMSE: 377.56
