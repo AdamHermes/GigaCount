@@ -6,8 +6,8 @@ This project implements a deep learning-based crowd counting model using the QNR
 
 1. Clone the repository:
    ```sh
-   git clone https://github.com/yourusername/crowd-counting.git
-   cd crowd-counting
+   git clone https://github.com/AdamHermes/GigaCount.git
+   cd GigaCount
    ```
 
 2. Set up a virtual environment:
@@ -28,11 +28,17 @@ This project implements a deep learning-based crowd counting model using the QNR
 4. Install dependencies:
    ```sh
    pip install -r requirements.txt
+   pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
    ```
 
 ## Dataset Preparation
+The link for the original dataset is:
+UCF-QNRF: https://www.crcv.ucf.edu/data/ucf-qnrf/
 
-1. Download the processed QNRF dataset.
+In this repo we will use a preprocessed dataset provided by the paper "CLIP-EBC: CLIP Can Count Accurately through Enhanced Blockwise Classification."
+
+1. Download the processed QNRF dataset in this drive link:
+https://drive.google.com/drive/folders/1X3_MApVSmkRRjHx_a5Tlnv-DUXNWOYnA?usp=sharing
 2. Place the dataset inside the `data` folder in the root project.
 
 ### Directory Structure:
@@ -41,14 +47,15 @@ project_root/
 │── data/
 │   ├── qnrf/
 │   │   ├── train/
-│   │   ├── test/
 │   │   ├── val/
-│── src/
 │── README.md
 ```
 ## Placing Pretrained Weights
 
-If you have pretrained `.pth` model weights (inside CLIP-EBC\models\clip\_clip\weights), place them inside the `models/weights/` folder (only use the weights for clip_text_encoder_resnet50.pth).
+The pretrained model weights for the text encoder is provided in the drive link below:
+https://drive.google.com/drive/folders/1WjwPZ8jmiiEDl73jpPl8zTMBeot-8j27?usp=sharing
+
+Download and place the weights inside the `models/weights/` folder (only use the weights for clip_text_encoder_resnet50.pth).
 
 ### Example:
 Ensure the structure is as follows:
