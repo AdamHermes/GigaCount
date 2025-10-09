@@ -3,16 +3,19 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from typing import Dict, Tuple, List
+from .dmloss import DMLoss, _reshape_density
 
 class AdaptiveHybridLoss(nn.Module):
-    def __init__(self, bins: List[Tuple[float, float]], weight_count_loss=1.0, use_dm_loss=False, reduction=32):
+    def __init__(self, bins: List[Tuple[float, float]], weight_count_loss=1.0,use_dm_loss=True, reduction=8):
         super().__init__()
-        self.cross_entropy_fn = nn.CrossEntropyLoss()
+        self.cross_entropy_fn = nn.CrossEntropyLoss(reduction="none")
         self.mse_loss_fn = nn.MSELoss()
+
+        self.count_loss_fn = DMLoss(reduction=reduction, input_size=224)
         self.use_dm_loss = use_dm_loss
         self.weight_count_loss = weight_count_loss
         self.reduction = reduction
-        self.bins = bins  # ✅ Store bins inside the loss function
+        self.bins = bins  
 
     def _bin_count(self, density_map: torch.Tensor) -> torch.Tensor:
         """Assigns ground-truth density maps to bin indices for classification."""
@@ -21,37 +24,33 @@ class AdaptiveHybridLoss(nn.Module):
             mask = (density_map >= low) & (density_map <= high)
             bin_counts[mask] = i
         
-        return bin_counts
+        return bin_counts.squeeze(1)
 
 
-    def forward(self, pred_class: Tensor, pred_density: Tensor, target_density: Tensor) -> Tuple[Tensor, Dict[str, Tensor]]:
-        # ✅ Ensure target_density has correct shape
-        target_density = target_density.unsqueeze(1) if target_density.dim() == 3 else target_density  # Ensure (N, 1, H, W)
-        
-        # ✅ Perform bilinear interpolation safely
-        target_density = F.interpolate(target_density, size=pred_density.shape[-2:], mode="bilinear", align_corners=False)
-        target_density = target_density.squeeze(1)  # Remove channel dim
-        
-        # ✅ Check for batch size mismatch
-        assert target_density.shape[0] == pred_density.shape[0], "Batch size mismatch between target and prediction"
-
-        # Compute classification loss
+    def forward(self, pred_class: Tensor, pred_density: Tensor, target_density: Tensor, target_points: List[Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]:
+        target_density = _reshape_density(target_density, reduction=self.reduction) if target_density.shape[-2:] != pred_density.shape[-2:] else target_density
+        assert pred_density.shape == target_density.shape, f"Expected pred_density and target_density to have the same shape, got {pred_density.shape} and {target_density.shape}"
         target_class = self._bin_count(target_density)
-        cross_entropy_loss = self.cross_entropy_fn(pred_class, target_class).mean()
+
+        cross_entropy_loss = self.cross_entropy_fn(pred_class, target_class).sum(dim=(-1, -2)).mean()
+        pred_prob = F.softmax(pred_class,dim=1)
+        target_prob = F.one_hot(target_class, num_classes=len(self.bins)).permute(0, 3, 1, 2).float()
+        euclidean_loss = ((pred_prob - target_prob) ** 2).sum(dim=(-1, -2, -3)).mean()
 
 
-        # Compute regression loss
-        count_loss = self.mse_loss_fn(pred_density, target_density).mean()
 
-        print("CrossEntropyLoss input stats: min:", pred_class.min().item(), "max:", pred_class.max().item())
-        print("MSELoss input stats: min:", pred_density.min().item(), "max:", pred_density.max().item())
+        if self.use_dm_loss:
+            count_loss, loss_info = self.count_loss_fn(pred_density, target_density, target_points)
+            loss_info["ce_loss"] = cross_entropy_loss.detach()
+        else:
+            count_loss = self.count_loss_fn(pred_density, target_density).sum(dim=(-1, -2, -3)).mean()
+            loss_info = {
+                "ce_loss": cross_entropy_loss.detach(),
+                f"{self.count_loss}_loss": count_loss.detach(),
+            }
 
-        loss = cross_entropy_loss + self.weight_count_loss * count_loss
-        loss_info = {
-            "loss": loss.detach(),
-            "class_loss": cross_entropy_loss.detach(),
-            "mse_loss": count_loss.detach(),
-        }
+        loss = cross_entropy_loss  + euclidean_loss + self.weight_count_loss * count_loss
+        loss_info["loss"] = loss.detach()
 
         return loss, loss_info
 

@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 from typing import Optional, Callable, Union, Tuple
 
-from utils import get_id, generate_density_map
+from utils_custom import get_id, generate_density_map
 
 curr_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -231,3 +231,7 @@ class NWPUTest(Dataset):
             return image, image_name
         else:
             return image
+
+
+
+

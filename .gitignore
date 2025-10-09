@@ -20,7 +20,7 @@ Thumbs.db
 
 .ipynb_checkpoints/
 
-eval_log.txt
+
 .vscode/
 .idea/
 *.iml

@@ -1,24 +1,225 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 import torch.nn.functional as F
-from typing import Union, Tuple
+from functools import partial
+from typing import Callable, Optional, Sequence, Tuple, Union, Any, List, TypeVar, List
+from types import FunctionType
+from itertools import repeat
+import warnings
+import os
+from collections.abc import Iterable
+
+def conv3x3(
+    in_channels: int,
+    out_channels: int,
+    stride: int = 1,
+    groups: int = 1,
+    dilation: int = 1,
+) -> nn.Conv2d:
+    """3x3 convolution with padding"""
+    return nn.Conv2d(
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=stride,
+        padding=dilation,
+        groups=groups,
+        bias=False,
+        dilation=dilation,
+    )
+
+
+def conv1x1(in_channels: int, out_channels: int, stride: int = 1) -> nn.Conv2d:
+    """1x1 convolution"""
+    return nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
+
 def _init_weights(model: nn.Module) -> None:
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            nn.init.kaiming_uniform_(m.weight, a=0, mode="fan_in", nonlinearity="relu")
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.)
+
+            # Optional: clamp weights to prevent extreme values
+            with torch.no_grad():
+                m.weight.clamp_(-1, 1)
+
+            # Diagnostic check
+            if torch.isnan(m.weight).any() or torch.isinf(m.weight).any():
+                print(f"[Warning] NaN or Inf found in Conv2d weights after init: {m}")
+
         elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
             nn.init.constant_(m.weight, 1.)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.)
+
         elif isinstance(m, nn.Linear):
-            nn.init.normal_(m.weight, std=0.01)
+            nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.)
 
+            # Diagnostic check
+            if torch.isnan(m.weight).any() or torch.isinf(m.weight).any():
+                print(f"[Warning] NaN or Inf found in Linear weights after init: {m}")
 
 
+class BasicBlock(nn.Module):
+    expansion: int = 1
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 1,
+        groups: int = 1,
+        base_width: int = 64,
+        dilation: int = 1,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        if groups != 1 or base_width != 64:
+            raise ValueError("BasicBlock only supports groups=1 and base_width=64")
+        if dilation > 1:
+            raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
+        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv3x3(in_channels, out_channels, stride)
+        self.bn1 = norm_layer(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(out_channels, out_channels)
+        self.bn2 = norm_layer(out_channels)
+        self.stride = stride
+        if in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                conv1x1(in_channels, out_channels),
+                nn.BatchNorm2d(out_channels),
+            )
+        else:
+            self.downsample = nn.Identity()
+
+    def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        out += self.downsample(identity)
+        out = self.relu(out)
+
+        return out
+
+
+class Bottleneck(nn.Module):
+    # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
+    # while original implementation places the stride at the first 1x1 convolution(self.conv1)
+    # according to "Deep residual learning for image recognition" https://arxiv.org/abs/1512.03385.
+    # This variant is also known as ResNet V1.5 and improves accuracy according to
+    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 1,
+        groups: int = 1,
+        base_width: int = 64,
+        dilation: int = 1,
+        expansion: int = 4,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        width = int(out_channels * (base_width / 64.0)) * groups
+        self.expansion = expansion
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(in_channels, width)
+        self.bn1 = norm_layer(width)
+        self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        self.bn2 = norm_layer(width)
+        self.conv3 = conv1x1(width, out_channels * self.expansion)
+        self.bn3 = norm_layer(out_channels * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        self.stride = stride
+        if in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                conv1x1(in_channels, out_channels),
+                nn.BatchNorm2d(out_channels),
+            )
+        else:
+            self.downsample = nn.Identity()
+
+    def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        out += self.downsample(identity)
+        out = self.relu(out)
+
+        return out
+
+class Upsample(nn.Module):
+    def __init__(
+        self,
+        size: Union[int, Tuple[int, int]] = None,
+        scale_factor: Union[float, Tuple[float, float]] = None,
+        mode: str = "nearest",
+        align_corners: bool = False,
+        antialias: bool = False,
+    ) -> None:
+        super().__init__()
+        self.interpolate = partial(
+            F.interpolate,
+            size=size,
+            scale_factor=scale_factor,
+            mode=mode,
+            align_corners=align_corners,
+            antialias=antialias,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.interpolate(x)
+    
+
+def make_resnet_layers(
+    block: Union[BasicBlock, Bottleneck],
+    cfg: List[Union[int, str]],
+    in_channels: int,
+    dilation: int = 1,
+    expansion: int = 1,
+) -> nn.Sequential:
+    layers = []
+    for v in cfg:
+        if v == "U":
+            layers.append(Upsample(scale_factor=2, mode="bilinear"))
+        else:
+            layers.append(block(
+                in_channels=in_channels,
+                out_channels=v,
+                dilation=dilation,
+                expansion=expansion,
+            ))
+            in_channels = v
+
+    layers = nn.Sequential(*layers)
+    layers.apply(_init_weights)
+    return layers
 
 
 num_to_word = {
@@ -58,3 +259,4 @@ def format_count(count: Union[float, Tuple[float, float]], prompt_type: str = "w
         left, right = int(count[0]), int(count[1])
         left, right = num2word(left), num2word(right) if prompt_type == "word" else left, right
         return f"There are between {left} and {right} people."
+

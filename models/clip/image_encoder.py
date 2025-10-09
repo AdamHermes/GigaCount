@@ -3,6 +3,36 @@ import torch.nn as nn
 from torch import Tensor
 from typing import List, Optional, Tuple, Union
 from .blocks import ODConvBlock, DensityAwarePooling
+
+from torchvision.models import convnext_tiny, ConvNeXt_Tiny_Weights
+
+
+class Backbone(nn.Module):
+    def __init__(self):
+        super(Backbone,self).__init__()
+        
+        feats =list(convnext_tiny(weights=ConvNeXt_Tiny_Weights.IMAGENET1K_V1).features.children())
+        
+        self.stem = nn.Sequential(*feats[0:2])
+        self.stage1 = nn.Sequential(*feats[2:4])
+        self.stage2 = nn.Sequential(*feats[4:6])
+        #self.stage3 = nn.Sequential(*feats[6:12])
+        
+    def forward(self, x):
+        x = x.float()
+        x = self.stem(x)
+        feature1 = x
+        x = self.stage1(x)
+        feature2 = x
+        x = self.stage2(x)
+        
+        
+        
+        return feature1, feature2, x
+
+# Run your training with this modified forward function
+
+
 class ModifiedConvNext(nn.Module):
     def __init__(
         self,
@@ -86,5 +116,8 @@ class ModifiedConvNextMultiScale(nn.Module):
         shallow = features[0]  # Early feature map
         mid = features[len(features) // 2]  # Middle-stage feature map
         deep = features[-2]  # Deepest feature map
-        
+        print("Feature 1 Shape: ", shallow.shape)
+        print("Feature 2 Shape: ", mid.shape)
+        print("Feature 3 Shape: ", deep.shape)
         return shallow, mid, deep
+

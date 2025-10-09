@@ -16,7 +16,12 @@ class ODConvBlock(nn.Module):
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
 
-# Attention Module for ODConv2D
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.autograd
+
+
 class Attention(nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size, groups=1, reduction=0.0625, kernel_num=4, min_channel=16):
         super(Attention, self).__init__()
@@ -27,12 +32,29 @@ class Attention(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Conv2d(in_planes, attention_channel, 1, bias=False)
-        self.norm = LayerNorm2D(attention_channel)  # ✅ Replace with LayerNorm
-
+        self.bn = nn.BatchNorm2d(attention_channel)
         self.relu = nn.ReLU(inplace=True)
 
         self.channel_fc = nn.Conv2d(attention_channel, in_planes, 1, bias=True)
-        self.filter_fc = nn.Conv2d(attention_channel, out_planes, 1, bias=True) if in_planes != out_planes else None
+        self.func_channel = self.get_channel_attention
+
+        if in_planes == groups and in_planes == out_planes:  # depth-wise convolution
+            self.func_filter = self.skip
+        else:
+            self.filter_fc = nn.Conv2d(attention_channel, out_planes, 1, bias=True)
+            self.func_filter = self.get_filter_attention
+
+        if kernel_size == 1:  # point-wise convolution
+            self.func_spatial = self.skip
+        else:
+            self.spatial_fc = nn.Conv2d(attention_channel, kernel_size * kernel_size, 1, bias=True)
+            self.func_spatial = self.get_spatial_attention
+
+        if kernel_num == 1:
+            self.func_kernel = self.skip
+        else:
+            self.kernel_fc = nn.Conv2d(attention_channel, kernel_num, 1, bias=True)
+            self.func_kernel = self.get_kernel_attention
 
         self._initialize_weights()
 
@@ -42,42 +64,124 @@ class Attention(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+            if isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def update_temperature(self, temperature):
+        self.temperature = temperature
+
+    @staticmethod
+    def skip(_):
+        return 1.0
 
     def get_channel_attention(self, x):
-        return torch.sigmoid(self.channel_fc(x).view(x.size(0), -1, 1, 1) / self.temperature)
+        channel_attention = torch.sigmoid(self.channel_fc(x).view(x.size(0), -1, 1, 1) / self.temperature)
+        return channel_attention
 
     def get_filter_attention(self, x):
-        return torch.sigmoid(self.filter_fc(x).view(x.size(0), -1, 1, 1) / self.temperature) if self.filter_fc else 1.0
+        filter_attention = torch.sigmoid(self.filter_fc(x).view(x.size(0), -1, 1, 1) / self.temperature)
+        return filter_attention
+
+    def get_spatial_attention(self, x):
+        spatial_attention = self.spatial_fc(x).view(x.size(0), 1, 1, 1, self.kernel_size, self.kernel_size)
+        spatial_attention = torch.sigmoid(spatial_attention / self.temperature)
+        return spatial_attention
+
+    def get_kernel_attention(self, x):
+        kernel_attention = self.kernel_fc(x).view(x.size(0), -1, 1, 1, 1, 1)
+        kernel_attention = F.softmax(kernel_attention / self.temperature, dim=1)
+        return kernel_attention
 
     def forward(self, x):
-        x = self.avgpool(x)
-        x = self.fc(x)
-        x = self.norm(x)
-        x = self.relu(x)
-        return self.get_channel_attention(x), self.get_filter_attention(x)
+        #print("attention1 NaN:", torch.isnan(x).any().item())
 
-# ODConv2D Implementation with Adaptive Filtering
+        x = self.avgpool(x)
+        #print("attention2 NaN:", torch.isnan(x).any().item())
+
+        x = self.fc(x)
+        #print("attention3 NaN:", torch.isnan(x).any().item())
+
+        x = self.bn(x)
+        #print("attention4 NaN:", torch.isnan(x).any().item())
+
+        x = self.relu(x)
+        #print("attention5 NaN:", torch.isnan(x).any().item())
+
+        return self.func_channel(x), self.func_filter(x), self.func_spatial(x), self.func_kernel(x)
+
+
 class ODConv2d(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, groups=1, reduction=0.0625, kernel_num=4):
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1,
+                 reduction=0.0625, kernel_num=4):
         super(ODConv2d, self).__init__()
+        self.in_planes = in_planes
+        self.out_planes = out_planes
         self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
         self.groups = groups
         self.kernel_num = kernel_num
-        self.attention = Attention(in_planes, out_planes, kernel_size, groups=groups, reduction=reduction, kernel_num=kernel_num)
-
-        self.weight = nn.Parameter(torch.randn(kernel_num, out_planes, in_planes // groups, kernel_size, kernel_size), requires_grad=True)
+        self.attention = Attention(in_planes, out_planes, kernel_size, groups=groups,
+                                   reduction=reduction, kernel_num=kernel_num)
+        self.weight = nn.Parameter(torch.randn(kernel_num, out_planes, in_planes//groups, kernel_size, kernel_size),
+                                   requires_grad=True)
         self._initialize_weights()
+
+        if self.kernel_size == 1 and self.kernel_num == 1:
+            self._forward_impl = self._forward_impl_pw1x
+        else:
+            self._forward_impl = self._forward_impl_common
 
     def _initialize_weights(self):
         for i in range(self.kernel_num):
             nn.init.kaiming_normal_(self.weight[i], mode='fan_out', nonlinearity='relu')
 
+    def update_temperature(self, temperature):
+        self.attention.update_temperature(temperature)
+
+    def _forward_impl_common(self, x):
+
+        x = x.float() 
+
+        # Multiplying channel attention (or filter attention) to weights and feature maps are equivalent,
+        # while we observe that when using the latter method the models will run faster with less gpu memory cost.
+
+        #print("Max of x before attention:", torch.max(x))
+        #print("Min of x before attention:", torch.min(x))
+        #print("x has Inf:", torch.isinf(x).any().item())
+
+        channel_attention, filter_attention, spatial_attention, kernel_attention = self.attention(x)
+
+        #print("channel_attention NaN:", torch.isnan(channel_attention).any().item())
+        #print("filter_attention NaN:", torch.isnan(filter_attention).any().item())
+        # print("spatial_attention NaN:", torch.isnan(spatial_attention).any().item())
+        #print("kernel_attention NaN:", torch.isnan(kernel_attention).any().item())
+
+ 
+        batch_size, in_planes, height, width = x.size()
+        x = x * channel_attention
+        x = x.reshape(1, -1, height, width)
+        aggregate_weight = spatial_attention * kernel_attention * self.weight.unsqueeze(dim=0)
+        aggregate_weight = torch.sum(aggregate_weight, dim=1).view(
+            [-1, self.in_planes // self.groups, self.kernel_size, self.kernel_size])
+        output = F.conv2d(x, weight=aggregate_weight, bias=None, stride=self.stride, padding=self.padding,
+                          dilation=self.dilation, groups=self.groups * batch_size)
+        output = output.view(batch_size, self.out_planes, output.size(-2), output.size(-1))
+        output = output * filter_attention
+        return output
+
+    def _forward_impl_pw1x(self, x):
+        channel_attention, filter_attention, spatial_attention, kernel_attention = self.attention(x)
+        x = x * channel_attention
+        output = F.conv2d(x, weight=self.weight.squeeze(dim=0), bias=None, stride=self.stride, padding=self.padding,
+                          dilation=self.dilation, groups=self.groups)
+        output = output * filter_attention
+        return output
+
     def forward(self, x):
-        
-        channel_attn, filter_attn = self.attention(x)
-        x = x * channel_attn
-        aggregate_weight = self.weight.sum(dim=0) * filter_attn
-        return F.conv2d(x, weight=aggregate_weight, bias=None, stride=1, padding=self.kernel_size // 2, groups=self.groups)
+        return self._forward_impl(x)
     
 class LayerNorm2D(nn.Module):
     """Custom LayerNorm for CNN feature maps (Vision-based)"""
@@ -100,7 +204,9 @@ class LayerNorm2D(nn.Module):
 
         return out
 
-# LayerNorm for 2D Inputs
+
+
+
 class LayerNorm(nn.LayerNorm):
     def forward(self, x):
 
@@ -119,7 +225,36 @@ class LayerNorm(nn.LayerNorm):
         return x
 
 
+class ChannelAttention(nn.Module):  
+    def __init__(self, channel):
+        super(ChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
 
+        self.shared_MLP = nn.Sequential(
+            nn.Conv2d(channel, channel, 1, bias=False),
+            nn.ReLU()
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x=self.avg_pool(x)
+        avgout = self.shared_MLP(x)
+        return self.sigmoid(avgout)
+    
+class SpatialAttention(nn.Module):  
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+ 
+        assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
+        padding = 3 if kernel_size == 7 else 1
+ 
+        self.conv1 = nn.Conv2d(1, 1, kernel_size, padding=padding, bias=False)
+        self.sigmoid = nn.Sigmoid()
+ 
+    def forward(self, x):
+        x = torch.mean(x, dim=1, keepdim=True)
+        x = self.conv1(x)
+        return self.sigmoid(x)
 
 # Density-Aware Pooling for CLIP Feature Aggregation
 class DensityAwarePooling(nn.Module):

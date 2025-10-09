@@ -4,8 +4,9 @@ from torchvision.transforms import ColorJitter as _ColorJitter
 import torchvision.transforms.functional as TF
 import numpy as np
 from typing import Tuple, Union, Optional, Callable
-
-
+import random
+import torchvision.transforms as T
+import torchvision.transforms.functional as F
 def _crop(
     image: Tensor,
     label: Tensor,
@@ -19,7 +20,9 @@ def _crop(
         label[:, 0] -= left
         label[:, 1] -= top
         label_mask = (label[:, 0] >= 0) & (label[:, 0] < width) & (label[:, 1] >= 0) & (label[:, 1] < height)
-        label = label[label_mask]
+        label = label[label_mask]   
+    image = image.clamp(0.0, 1.0)
+
 
     return image, label
 
@@ -37,8 +40,22 @@ def _resize(
         label[:, 1] = label[:, 1] * height / image_height
         label[:, 0] = label[:, 0].clamp(min=0, max=width - 1)
         label[:, 1] = label[:, 1].clamp(min=0, max=height - 1)
+    image = image.clamp(0.0, 1.0)  # Avoid invalid float values from interpolation
 
     return image, label
+
+class NormalizeTensor:
+    def __init__(self, mean, std):
+        self.mean = torch.tensor(mean).view(3, 1, 1)
+        self.std = torch.tensor(std).view(3, 1, 1)
+
+    def __call__(self, image: torch.Tensor, label: torch.Tensor):
+        if image.max() > 1.0:
+            image = image / 255.0
+
+        image = (image - self.mean.to(image.device)) / self.std.to(image.device)
+        return image, label
+
 
 
 class RandomCrop(object):
@@ -260,3 +277,67 @@ class PepperSaltNoise(object):
         image = torch.where(noise < self.saltiness, 1., image)  # Salt
         image = torch.where(noise > 1 - self.spiciness, 0., image)    # Pepper
         return image, label
+
+
+
+
+
+
+def _resize_keypoints(keypoints: torch.Tensor, original_size: Tuple[int, int], new_size: Tuple[int, int]) -> torch.Tensor:
+    if len(keypoints) > 0:
+        ow, oh = original_size
+        nw, nh = new_size
+        keypoints[:, 0] = keypoints[:, 0] * (nw / ow)
+        keypoints[:, 1] = keypoints[:, 1] * (nh / oh)
+        keypoints[:, 0] = keypoints[:, 0].clamp(min=0, max=nw - 1)
+        keypoints[:, 1] = keypoints[:, 1].clamp(min=0, max=nh - 1)
+    return keypoints
+
+def _crop_keypoints(keypoints: torch.Tensor, top: int, left: int, crop_width: int, crop_height: int) -> torch.Tensor:
+    if len(keypoints) > 0:
+        keypoints[:, 0] -= left
+        keypoints[:, 1] -= top
+        mask = (keypoints[:, 0] >= 0) & (keypoints[:, 0] < crop_width) & \
+               (keypoints[:, 1] >= 0) & (keypoints[:, 1] < crop_height)
+        keypoints = keypoints[mask]
+    return keypoints
+
+class CombinedTrainTransform:
+    def __init__(self, output_size: Tuple[int, int], scale_range: Tuple[float, float] = (0.8, 1.2), other_transforms=None):
+        self.output_size = output_size
+        self.scale_range = scale_range
+        self.other_transforms = other_transforms if other_transforms is not None else T.Compose([])
+
+    def __call__(self, img: torch.Tensor, keypoints: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        img_pil = F.to_pil_image(img)
+        original_width, original_height = img_pil.size
+
+        # Random Resized Crop-like scaling
+        scale = random.uniform(self.scale_range[0], self.scale_range[1])
+        resize_height = int(original_height * scale)
+        resize_width = int(original_width * scale)
+        resized_img = F.resize(img_pil, (resize_height, resize_width), interpolation=F.InterpolationMode.BICUBIC, antialias=True)
+        resized_keypoints = _resize_keypoints(keypoints.clone(), (original_width, original_height), (resize_width, resize_height))
+
+        # Random Crop to output size
+        crop_params = T.RandomCrop.get_params(resized_img, output_size=self.output_size)
+        top, left, crop_height, crop_width = crop_params
+        cropped_img = F.crop(resized_img, top, left, crop_height, crop_width)
+        cropped_keypoints = _crop_keypoints(resized_keypoints.clone(), top, left, crop_width, crop_height)
+
+        # Horizontal Flip
+        if random.random() > 0.5:
+            cropped_img = F.hflip(cropped_img)
+            cropped_keypoints[:, 0] = crop_width - cropped_keypoints[:, 0]
+
+        # Apply other transformations (ToTensor, Normalize)
+        img_tensor = T.ToTensor()(cropped_img)
+        if hasattr(self.other_transforms, 'transforms'): # Check if it's a Compose object
+            for t in self.other_transforms.transforms:
+                if isinstance(t, T.Normalize):
+                    img_tensor = t(img_tensor)
+                else:
+                    img_tensor = t(img_tensor) # Apply other tensor-based transforms if needed
+
+        return img_tensor, cropped_keypoints.float()
+
