@@ -1,6 +1,6 @@
-# Crowd Counting with QNRF Dataset
+# GigaCount Enhancing Crowd Counting by Integrating a Multi-Scale Feature Fusion Model into CLIP-EBC
 
-This project implements a deep learning-based crowd counting model using the QNRF dataset. It leverages PyTorch for training and evaluation.
+This project implements a deep learning-based crowd counting model using the UCF-QNRF dataset. It leverages PyTorch for training and evaluation.
 
 ## Installation
 
