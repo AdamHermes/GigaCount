@@ -21,7 +21,7 @@ import torchvision.transforms as T
 
 # Training Configurationsx  
 BATCH_SIZE = 24
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 5e-4
 EPOCHS = 600
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LOSS_TYPE = "adaptive_hybrid"
