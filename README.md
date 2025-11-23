@@ -72,3 +72,8 @@ To train the model, run:
 python train.py
 ```
 
+## Acknowledgement
+
+This project is built on the base of CLIP-EBC which can be referred at:
+https://github.com/Yiming-M/CLIP-EBC/tree/main
+
